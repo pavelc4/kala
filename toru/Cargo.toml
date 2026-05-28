@@ -1,0 +1,37 @@
+[package]
+name = "toru"
+version = "0.1.0"
+description = "Per-app frame-time probe for Android via eBPF uprobe on libgui Surface::queueBuffer"
+keywords = ["ebpf", "android", "frame-time", "uprobe", "aya"]
+categories = ["os::linux-apis", "external-ffi-bindings"]
+readme = "../README.md"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+# Embed the pre-built BPF object into the rlib so downstream crates can
+# `cargo add toru` without needing bpf-linker / nightly.
+build = "build.rs"
+include = [
+    "src/**/*.rs",
+    "build.rs",
+    "../toru-ebpf/Cargo.toml",
+    "../toru-ebpf/Cargo.lock",
+    "../toru-ebpf/rust-toolchain",
+    "../toru-ebpf/.cargo/**",
+    "../toru-ebpf/src/**/*.rs",
+    "../README.md",
+    "../LICENSE-*",
+]
+
+[dependencies]
+aya = "0.13"
+libc = "0.2"
+mio = { version = "1", features = ["os-ext"] }
+thiserror = "2"
+
+[[example]]
+name = "basic"
+path = "examples/basic.rs"
