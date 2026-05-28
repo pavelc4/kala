@@ -1,0 +1,35 @@
+[package]
+name = "toru-ebpf"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Kernel-side eBPF uprobe that timestamps Surface::queueBuffer on Android"
+license = "MIT OR Apache-2.0"
+
+[[bin]]
+name = "toru-ebpf"
+path = "src/main.rs"
+
+[dependencies]
+aya-ebpf = "0.1.1"
+
+[profile.dev]
+opt-level = 3
+debug = false
+debug-assertions = false
+overflow-checks = false
+lto = true
+panic = "abort"
+incremental = false
+codegen-units = 1
+rpath = false
+
+[profile.release]
+lto = true
+panic = "abort"
+codegen-units = 1
+
+# Standalone workspace so the outer Toru workspace doesn't try to
+# resolve aya-ebpf against the host target. Building this crate is the
+# job of `toru`'s build.rs.
+[workspace]
