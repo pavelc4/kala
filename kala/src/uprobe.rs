@@ -12,7 +12,7 @@ use aya::{
 use crate::error::{ProbeError, Result};
 use crate::loader;
 
-const PROGRAM_NAME: &str = "toru_frame_probe";
+const PROGRAM_NAME: &str = "kala_frame_probe";
 const LIBGUI_PATH: &str = "/system/lib64/libgui.so";
 
 // Mangled `android::Surface::queueBuffer` family symbols. AOSP has

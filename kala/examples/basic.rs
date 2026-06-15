@@ -8,7 +8,7 @@
 
 use std::{env, process, time::{Duration, Instant}};
 
-use toru::FrameProbe;
+use kala::FrameProbe;
 
 fn main() {
     let pid: i32 = env::args()

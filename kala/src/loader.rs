@@ -22,7 +22,7 @@ pub fn load() -> Result<Ebpf> {
 
     let bpf = Ebpf::load(include_bytes_aligned!(concat!(
         env!("OUT_DIR"),
-        "/toru-ebpf.bpf.o"
+        "/kala-ebpf.bpf.o"
     )))?;
     Ok(bpf)
 }

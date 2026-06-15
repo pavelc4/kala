@@ -1,4 +1,4 @@
-//! # toru
+//! # kala
 //!
 //! Per-app frame-time probe for Android, powered by eBPF uprobes on
 //! libgui's `Surface::queueBuffer`. Drop it into any tool that needs
@@ -9,7 +9,7 @@
 //!
 //! ```no_run
 //! use std::time::Duration;
-//! use toru::FrameProbe;
+//! use kala::FrameProbe;
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let mut probe = FrameProbe::new()?;
@@ -33,7 +33,7 @@
 //! * Build time: `bpf-linker` available in `PATH` (`cargo install
 //!   bpf-linker`). The pre-built BPF object is embedded into the
 //!   library, so downstream consumers do **not** need bpf-linker
-//!   when they depend on `toru` from crates.io.
+//!   when they depend on `kala` from crates.io.
 //!
 //! ## How it works
 //!

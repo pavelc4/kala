@@ -1,13 +1,13 @@
 [package]
-name = "toru-ebpf"
+name = "kala-ebpf"
 version = "0.1.0"
 edition = "2024"
 publish = false
 description = "Kernel-side eBPF uprobe that timestamps Surface::queueBuffer on Android"
-license = "MIT OR Apache-2.0"
+license = "MIT"
 
 [[bin]]
-name = "toru-ebpf"
+name = "kala-ebpf"
 path = "src/main.rs"
 
 [dependencies]
@@ -29,7 +29,7 @@ lto = true
 panic = "abort"
 codegen-units = 1
 
-# Standalone workspace so the outer Toru workspace doesn't try to
+# Standalone workspace so the outer kala workspace doesn't try to
 # resolve aya-ebpf against the host target. Building this crate is the
-# job of `toru`'s build.rs.
+# job of `kala`'s build.rs.
 [workspace]

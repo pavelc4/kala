@@ -1,5 +1,5 @@
 [package]
-name = "toru"
+name = "kala"
 version = "0.1.0"
 description = "Per-app frame-time probe for Android via eBPF uprobe on libgui Surface::queueBuffer"
 keywords = ["ebpf", "android", "frame-time", "uprobe", "aya"]
@@ -12,16 +12,16 @@ authors.workspace = true
 rust-version.workspace = true
 
 # Embed the pre-built BPF object into the rlib so downstream crates can
-# `cargo add toru` without needing bpf-linker / nightly.
+# `cargo add kala` without needing bpf-linker / nightly.
 build = "build.rs"
 include = [
     "src/**/*.rs",
     "build.rs",
-    "../toru-ebpf/Cargo.toml",
-    "../toru-ebpf/Cargo.lock",
-    "../toru-ebpf/rust-toolchain",
-    "../toru-ebpf/.cargo/**",
-    "../toru-ebpf/src/**/*.rs",
+    "../kala-ebpf/Cargo.toml",
+    "../kala-ebpf/Cargo.lock",
+    "../kala-ebpf/rust-toolchain",
+    "../kala-ebpf/.cargo/**",
+    "../kala-ebpf/src/**/*.rs",
     "../README.md",
     "../LICENSE-*",
 ]

@@ -1,12 +1,12 @@
 <p align="center">
-    <a href="https://crates.io/crates/toru">
-        <img src="https://img.shields.io/crates/v/toru?style=for-the-badge&colorA=363A4F&logo=rust&logoColor=D9E0EE" alt="crates.io">
+    <a href="https://crates.io/crates/kala">
+        <img src="https://img.shields.io/crates/v/kala?style=for-the-badge&colorA=363A4F&logo=rust&logoColor=D9E0EE" alt="crates.io">
     </a>
-    <a href="https://docs.rs/toru">
-        <img src="https://img.shields.io/docsrs/toru?style=for-the-badge&colorA=363A4F&logo=docsdotrs&logoColor=D9E0EE" alt="docs.rs">
+    <a href="https://docs.rs/kala">
+        <img src="https://img.shields.io/docsrs/kala?style=for-the-badge&colorA=363A4F&logo=docsdotrs&logoColor=D9E0EE" alt="docs.rs">
     </a>
     <a href="#license">
-        <img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue?style=for-the-badge&colorA=363A4F" alt="license">
+        <img src="https://img.shields.io/badge/license-MIT-blue?style=for-the-badge&colorA=363A4F" alt="license">
     </a>
 </p>
 
@@ -17,7 +17,7 @@ ring-buffer plumbing required.
 
 ```rust
 use std::time::Duration;
-use toru::FrameProbe;
+use kala::FrameProbe;
 
 let mut probe = FrameProbe::new()?;
 probe.attach(1234)?; // PID of the target app
@@ -42,10 +42,10 @@ while let Some((pid, frametime)) =
 **At build time**
 
 * `bpf-linker` on the host: `cargo install bpf-linker`.
-* A nightly toolchain (only used to build the BPF crate; the `toru`
+* A nightly toolchain (only used to build the BPF crate; the `kala`
   crate itself builds on stable).
 
-**Downstream consumers** (people who depend on `toru` from crates.io)
+**Downstream consumers** (people who depend on `kala` from crates.io)
 do **not** need `bpf-linker` or nightly — the BPF object is
 pre-built and embedded into the published library via
 `include_bytes_aligned!`.
@@ -65,8 +65,5 @@ per displayed frame.
 
 ## License
 
-Licensed under either of:
-
-* [Apache License, Version 2.0](LICENSE-APACHE)
-* [MIT license](LICENSE-MIT)
+Licensed under the [MIT license](LICENSE-MIT).
 

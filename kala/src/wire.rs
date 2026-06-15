@@ -1,8 +1,8 @@
 //! Wire format shared between the kernel-side eBPF program at
-//! `toru-ebpf/` and this user-space loader.
+//! `kala-ebpf/` and this user-space loader.
 //!
 //! `FrameRecord` MUST stay byte-for-byte identical to the
-//! `FrameRecord` declared in `toru-ebpf/src/main.rs`. If you change
+//! `FrameRecord` declared in `kala-ebpf/src/main.rs`. If you change
 //! either, change both and rebuild.
 
 use std::ptr;

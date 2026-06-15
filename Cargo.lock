@@ -121,6 +121,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "kala"
+version = "0.1.0"
+dependencies = [
+ "aya",
+ "libc",
+ "mio",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "libc"
 version = "0.2.186"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -235,16 +245,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
-]
-
-[[package]]
-name = "toru"
-version = "0.1.0"
-dependencies = [
- "aya",
- "libc",
- "mio",
- "thiserror 2.0.18",
 ]
 
 [[package]]

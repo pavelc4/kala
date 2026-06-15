@@ -1,5 +1,5 @@
-// Builds the kernel-side eBPF crate at `../toru-ebpf` and stages its
-// output as `$OUT_DIR/toru-ebpf.bpf.o`, which the user-space loader
+// Builds the kernel-side eBPF crate at `../kala-ebpf` and stages its
+// output as `$OUT_DIR/kala-ebpf.bpf.o`, which the user-space loader
 // then embeds via `include_bytes_aligned!`.
 //
 // Prerequisite (one-time, per machine):
@@ -11,10 +11,10 @@
 
 use std::{env, fs, path::PathBuf, process::Command};
 
-const EBPF_CRATE_REL: &str = "../toru-ebpf";
+const EBPF_CRATE_REL: &str = "../kala-ebpf";
 const EBPF_TARGET: &str = "bpfel-unknown-none";
-const EBPF_BIN_NAME: &str = "toru-ebpf";
-const STAGED_OBJECT_NAME: &str = "toru-ebpf.bpf.o";
+const EBPF_BIN_NAME: &str = "kala-ebpf";
+const STAGED_OBJECT_NAME: &str = "kala-ebpf.bpf.o";
 
 fn main() {
     if let Err(e) = build_ebpf() {

@@ -1,11 +1,11 @@
-// Toru — kernel-side eBPF program.
+// kala — kernel-side eBPF program.
 //
 // Attaches as a uprobe on `android::Surface::queueBuffer` inside
 // `/system/lib64/libgui.so`. On every call, captures the current
 // monotonic kernel time and the buffer pointer argument, then submits
 // a `FrameRecord` to the user-space ring buffer.
 //
-// User-space side lives in the `toru` crate.
+// User-space side lives in the `kala` crate.
 
 #![no_std]
 #![no_main]
@@ -18,7 +18,7 @@ use aya_ebpf::{
 };
 
 /// Wire format shared with user-space. Must stay byte-for-byte
-/// identical to `toru::wire::FrameRecord`.
+/// identical to `kala::wire::FrameRecord`.
 #[repr(C)]
 pub struct FrameRecord {
     pub ktime_ns: u64,
@@ -31,7 +31,7 @@ pub struct FrameRecord {
 static RING_BUF: RingBuf = RingBuf::with_byte_size(256 * 1024, 0);
 
 #[uprobe]
-pub fn toru_frame_probe(ctx: ProbeContext) -> u32 {
+pub fn kala_frame_probe(ctx: ProbeContext) -> u32 {
     match emit(&ctx) {
         Some(()) => 0,
         None => 1,
