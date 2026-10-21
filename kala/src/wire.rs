@@ -34,6 +34,7 @@ impl FrameRecord {
     ///
     /// Caller must ensure `bytes.len() >= size_of::<FrameRecord>()`.
     #[inline]
+    #[must_use]
     pub unsafe fn from_ring_slice(bytes: &[u8]) -> Self {
         unsafe { ptr::read_unaligned(bytes.as_ptr().cast::<FrameRecord>()) }
     }
