@@ -77,7 +77,8 @@ fn rebuild_asset(manifest_dir: &Path, asset: &PathBuf) -> Result<(), String> {
     }
 
     fs::create_dir_all(asset.parent().unwrap()).map_err(|e| format!("create assets dir: {e}"))?;
-    fs::copy(&built, asset).map_err(|e| format!("copy {built:?} -> {:?}: {e}", asset))?;
+    fs::copy(&built, asset)
+        .map_err(|e| format!("copy {} -> {}: {e}", built.display(), asset.display()))?;
     println!("cargo:warning=rebuilt eBPF asset at {}", asset.display());
     Ok(())
 }
