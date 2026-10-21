@@ -23,6 +23,9 @@ jobs:
       - name: Install eBPF build toolchain
         run: |
           rustup toolchain install nightly --profile minimal --component rust-src
+          # Idempotent belt-and-suspenders: some runners resolve the
+          # channel differently than the install step above.
+          rustup component add rust-src --toolchain nightly
           mkdir -p "$HOME/.local/bin"
           curl -fLO https://github.com/aya-rs/bpf-linker/releases/latest/download/bpf-linker-x86_64-unknown-linux-musl.tar.zst
           tar -xpf bpf-linker-x86_64-unknown-linux-musl.tar.zst -C "$HOME/.local/bin"
