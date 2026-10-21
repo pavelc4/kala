@@ -16,15 +16,18 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       # A fresh checkout has no `assets/kala-ebpf.bpf.o` (it is not in
-      # git), so build.rs has to regenerate it here once. bpf-linker
-      # needs the system LLVM headers, and build-std needs rust-src on
-      # the pinned nightly.
+      # git), so build.rs has to regenerate it here once. build-std
+      # needs rust-src on the pinned nightly; bpf-linker comes from the
+      # official prebuilt musl tarball — upstream explicitly warns
+      # against `cargo install` builds (LLVM linkage hell).
       - name: Install eBPF build toolchain
         run: |
-          sudo apt-get update -y
-          sudo apt-get install -y llvm-dev libclang-dev
           rustup toolchain install nightly --profile minimal --component rust-src
-          cargo install bpf-linker --locked
+          mkdir -p "$HOME/.local/bin"
+          curl -fLO https://github.com/aya-rs/bpf-linker/releases/latest/download/bpf-linker-x86_64-unknown-linux-musl.tar.zst
+          tar -xpf bpf-linker-x86_64-unknown-linux-musl.tar.zst -C "$HOME/.local/bin"
+          rm -f bpf-linker-x86_64-unknown-linux-musl.tar.zst
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - run: cargo clippy -p kala-ebpf --all-targets -- -D warnings -W clippy::pedantic
       - run: cargo test -p kala-ebpf
       # Packaging sanity: asset + docs + ready for crates.io upload.
