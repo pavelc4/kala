@@ -5,7 +5,52 @@
 
 use super::*;
 use crate::wire::FrameRecord;
-use std::time::Duration;
+use std::{sync::atomic::Ordering, time::Duration};
+
+/// Allocation counter for the zero-alloc regression test below.
+///
+/// Thread-aware: counts allocations only for the test thread that
+/// opts in via `mark_tracked`, so other tests running in parallel on
+/// their own threads can't pollute the measurement window.
+mod alloc_count {
+    use std::{
+        alloc::{GlobalAlloc, Layout, System},
+        cell::Cell,
+        sync::atomic::{AtomicU64, Ordering},
+    };
+
+    pub static ALLOCS: AtomicU64 = AtomicU64::new(0);
+
+    thread_local! {
+        static TRACKED: Cell<bool> = const { Cell::new(false) };
+    }
+
+    /// Opt the *current thread* into the counting window.
+    pub fn mark_tracked() {
+        TRACKED.with(|c| c.set(true));
+    }
+
+    pub struct Counting;
+
+    // SAFETY: forwards to `System`, which is already thread-safe.
+    unsafe impl GlobalAlloc for Counting {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            if TRACKED.with(Cell::get) {
+                ALLOCS.fetch_add(1, Ordering::Relaxed);
+            }
+            // SAFETY: callers of `alloc` obey the `GlobalAlloc` contract.
+            unsafe { System.alloc(layout) }
+        }
+
+        unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+            // SAFETY: `ptr` came from `System.alloc` with the same layout.
+            unsafe { System.dealloc(ptr, layout) }
+        }
+    }
+}
+
+#[global_allocator]
+static TEST_ALLOCATOR: alloc_count::Counting = alloc_count::Counting;
 
 // One buffer surface: every sighting after the first is a clean
 // per-frame delta.
@@ -89,4 +134,54 @@ fn steady_frames_keep_flowing_after_history_cap() {
         }
     }
     assert_eq!(yielded, events - 1);
+}
+
+// Steady-state ingestion must not touch the heap: after the first
+// sightings, the HashMap keys and per-buffer histories are all
+// fixed-capacity and recycled in place. If this line fails, someone
+// introduced a per-frame allocation — slow GC-like pressure that only
+// shows up in multi-hour sessions.
+#[test]
+fn steady_state_is_allocation_free() {
+    alloc_count::mark_tracked();
+    let mut t = BufferTimes::default();
+    let frame_ns: u64 = 8_333_333; // 120 Hz
+
+    // Uneven interleave (like the test above): A every 2nd tick, B
+    // every 3rd, C on leftovers, so the active-buffer heuristic has a
+    // deterministic winner — no HashMap tie noise.
+    let buffer_for = |i: u64| -> (u64, bool) {
+        if i % 2 == 0 {
+            (0x10, true)
+        } else if i % 3 == 0 {
+            (0x11, false)
+        } else {
+            (0x12, false)
+        }
+    };
+    let mut seen = [false; 3];
+    let mut check = |t: &mut BufferTimes, i: u64| {
+        let (b, is_a) = buffer_for(i);
+        let idx = usize::try_from(b - 0x10).unwrap_or(0);
+        let ft = t.record(FrameRecord { ktime_ns: frame_ns * i, buffer: b });
+        if seen[idx] {
+            assert_eq!(ft.is_some(), is_a, "interleave must surface A-only");
+        } else {
+            assert!(ft.is_none(), "first sighting yields no delta");
+            seen[idx] = true;
+        }
+    };
+
+    // Warm-up: creates all three buffer entries; first-time inserts
+    // are allowed to allocate.
+    for i in 1u64..=12 {
+        check(&mut t, i);
+    }
+
+    let before = alloc_count::ALLOCS.load(Ordering::Relaxed);
+    for i in 13u64..1_000 {
+        check(&mut t, i);
+    }
+    let after = alloc_count::ALLOCS.load(Ordering::Relaxed);
+    assert_eq!(after - before, 0, "steady-state frame ingestion allocated");
 }
