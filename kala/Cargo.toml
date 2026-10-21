@@ -1,0 +1,34 @@
+[package]
+name = "kala-ebpf"
+version = "0.1.0"
+description = "Per-app frame-time probe for Android via eBPF uprobe on libgui Surface::queueBuffer"
+keywords = ["ebpf", "android", "frame-time", "uprobe", "aya"]
+categories = ["os::linux-apis", "external-ffi-bindings"]
+readme = "../README.md"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+# The pre-built BPF object (`assets/kala-ebpf.bpf.o`) ships inside the
+# package, so consumers get a working `cargo add kala-ebpf` with no
+# bpf-linker / nightly. Maintainers regenerate it with
+# `KALA_REBUILD_BPF=1 cargo build` (requires bpf-linker + nightly).
+build = "build.rs"
+include = [
+    "src/**/*",
+    "build.rs",
+    "examples/**/*",
+    "assets/*.bpf.o",
+]
+
+[dependencies]
+aya = "0.13"
+libc = "0.2"
+mio = { version = "1", features = ["os-ext"] }
+thiserror = "2"
+
+[[example]]
+name = "basic"
+path = "examples/basic.rs"
