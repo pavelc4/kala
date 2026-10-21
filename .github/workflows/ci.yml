@@ -12,7 +12,7 @@ jobs:
     name: check · linux
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       # A fresh checkout has no `assets/kala-ebpf.bpf.o` (not in git),
@@ -59,7 +59,7 @@ jobs:
     needs: check-linux
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-linux-android
