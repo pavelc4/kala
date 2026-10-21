@@ -51,6 +51,12 @@ const QUEUE_BUFFER_SYMBOLS: &[&str] = &[
 
 pub struct QueueBufferProbe {
     bpf: Ebpf,
+    /// Owned ring-buffer reader. Created once at attach: every pump
+    /// re-mmaps two pages and re-raises kernel traffic if we rebuilt
+    /// it per call, and a fresh reader re-reads the consumer cursor
+    /// from the meta page anyway, so one persistent reader is both
+    /// cheaper and simpler to reason about.
+    ring: RingBuf<MapData>,
 }
 
 impl QueueBufferProbe {
@@ -81,17 +87,14 @@ impl QueueBufferProbe {
             }
         }
 
-        Ok(Self { bpf })
+        let ring = RingBuf::try_from(bpf.take_map("RING_BUF").ok_or(ProbeError::SymbolNotFound)?)?;
+
+        Ok(Self { bpf, ring })
     }
 
-    /// Borrow the ring-buf map for polling/reading.
-    pub fn ring_buf(&mut self) -> Result<RingBuf<&mut MapData>> {
-        let map = self
-            .bpf
-            .map_mut("RING_BUF")
-            .ok_or(ProbeError::SymbolNotFound)?;
-        let ring = RingBuf::try_from(map)?;
-        Ok(ring)
+    /// The persistent ring-buffer reader for polling/reading.
+    pub fn ring(&mut self) -> &mut RingBuf<MapData> {
+        &mut self.ring
     }
 }
 

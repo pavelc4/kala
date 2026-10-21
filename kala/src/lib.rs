@@ -83,7 +83,8 @@ const EVENT_CAPACITY: usize = 1024;
 /// Per-PID cleanup is automatic: dropping the [`FrameProbe`] drops
 /// every attached uprobe, which unloads its eBPF program.
 pub struct FrameProbe {
-    poll: Option<Poll>,
+    poll: Poll,
+    events: Events,
     targets: HashMap<Pid, FrameTracker>,
     pending: VecDeque<Pid>,
 }
@@ -93,11 +94,13 @@ impl FrameProbe {
     ///
     /// # Errors
     ///
-    /// Returns [`ProbeError`] when the memlock limit cannot be raised
-    /// or the embedded eBPF program fails to initialize.
+    /// Returns [`ProbeError`] when the poller cannot be created, the
+    /// memlock limit cannot be raised, or the embedded eBPF program
+    /// fails to initialize.
     pub fn new() -> Result<Self> {
         Ok(Self {
-            poll: None,
+            poll: Poll::new()?,
+            events: Events::with_capacity(EVENT_CAPACITY),
             targets: HashMap::new(),
             pending: VecDeque::with_capacity(EVENT_CAPACITY),
         })
@@ -109,7 +112,14 @@ impl FrameProbe {
     /// # Errors
     ///
     /// Returns [`ProbeError`] when the symbol cannot be resolved in
-    /// `libgui.so` or attaching (poll registry rebuild) fails.
+    /// `libgui.so` or the ring buffer cannot be registered with the
+    /// poller (in which case nothing is attached).
+    ///
+    /// # Panics
+    ///
+    /// Panics only if `pid` were negative when building the poll
+    /// token — unreachable, because the `pid <= 0` guard above runs
+    /// first in this same function.
     pub fn attach(&mut self, pid: Pid) -> Result<()> {
         if pid <= 0 {
             return Err(ProbeError::InvalidPid(pid));
@@ -117,47 +127,56 @@ impl FrameProbe {
         if self.targets.contains_key(&pid) {
             return Ok(());
         }
-        let probe = QueueBufferProbe::attach(pid)?;
-        self.targets.insert(pid, FrameTracker::new(probe));
-        self.rebuild_poll()
+        let mut tracker = FrameTracker::new(QueueBufferProbe::attach(pid)?);
+        let fd = tracker.probe.ring().as_raw_fd();
+        // `pid` was validated positive above; this cannot fail.
+        let token = Token(usize::try_from(pid).expect("pid validated positive in attach"));
+        self.poll.registry().register(
+            &mut SourceFd(&fd),
+            token,
+            Interest::READABLE,
+        )?;
+        self.targets.insert(pid, tracker);
+        Ok(())
     }
 
     /// Stop watching `pid`. Returns `true` if the PID was attached.
     ///
     /// # Errors
     ///
-    /// Returns [`ProbeError`] when rebuilding the poll registry fails
-    /// after removal; the PID is removed either way.
+    /// Returns [`ProbeError`] when deregistering the ring buffer fails;
+    /// the PID is removed either way.
     pub fn detach(&mut self, pid: Pid) -> Result<bool> {
-        let removed = self.targets.remove(&pid).is_some();
-        if removed {
-            self.rebuild_poll()?;
-        }
-        Ok(removed)
+        // Remove first: the tracker keeps its map (and fd) alive, so
+        // the epoll CTL below still refers to a living descriptor, and
+        // a failed deregistration still leaves the PID detached.
+        let Some(mut tracker) = self.targets.remove(&pid) else {
+            return Ok(false);
+        };
+        let fd = tracker.probe.ring().as_raw_fd();
+        self.poll.registry().deregister(&mut SourceFd(&fd))?;
+        Ok(true)
     }
 
-    /// Block for up to `timeout`, returning the first `(pid, frametime)`
-    /// that arrives. Returns `None` if nothing arrived or there is
-    /// nothing attached yet.
+    /// Drains the pending queue, polling the ring buffers only when it
+    /// runs dry. Returns `None` if nothing arrived or there is nothing
+    /// attached yet.
     pub fn recv_with_deadline(&mut self, timeout: Duration) -> Option<(Pid, Duration)> {
-        // Nothing queued? Poll once, then rebuild the registry so any
-        // token whose backing fd went away is dropped. (When `poll` is
-        // `None` nothing is attached at all, so rebuilding is a no-op.)
-        // Errors aren't fatal — the next call retries.
-        if self.pending.is_empty()
-            && let Some(poll) = self.poll.as_mut()
-        {
-            let mut events = Events::with_capacity(EVENT_CAPACITY);
-            let _ = poll.poll(&mut events, Some(timeout));
+        // Errors aren't fatal — the next call retries. Every attached
+        // ring fd is registered exactly once (on attach) and
+        // deregistered on detach, so the registry only ever holds fds
+        // this process still owns — no periodic registry rebuild.
+        if self.pending.is_empty() {
+            self.events.clear();
+            let _ = self.poll.poll(&mut self.events, Some(timeout));
             self.pending
-                .extend(events.iter().filter_map(pid_from_event));
-            let _ = self.rebuild_poll();
+                .extend(self.events.iter().filter_map(pid_from_event));
         }
 
         loop {
             let pid = self.pending.pop_front()?;
             let tracker = self.targets.get_mut(&pid)?;
-            if let Ok(Some(duration)) = tracker.pump() {
+            if let Some(duration) = tracker.pump() {
                 return Some((pid, duration));
             }
             // Either no frame was queued for this PID or the ring
@@ -171,21 +190,14 @@ impl FrameProbe {
         self.targets.len()
     }
 
-    fn rebuild_poll(&mut self) -> Result<()> {
-        let poll = Poll::new()?;
-        for (pid, tracker) in &mut self.targets {
-            let fd = tracker.probe.ring_buf()?.as_raw_fd();
-            // `attach` guarantees a positive pid, and a positive i32
-            // always fits usize — this conversion cannot fail.
-            let token = Token(usize::try_from(*pid).expect("pid validated positive in attach"));
-            poll.registry().register(
-                &mut SourceFd(&fd),
-                token,
-                Interest::READABLE,
-            )?;
-        }
-        self.poll = Some(poll);
-        Ok(())
+    /// Drain one queued record from the first attached tracker without
+    /// waiting for epoll. Bench/tests use this to attribute costs to
+    /// the ring-read path alone.
+    pub fn pump_now(&mut self) -> Option<Duration> {
+        self.targets
+            .values_mut()
+            .next()
+            .and_then(FrameTracker::pump)
     }
 }
 

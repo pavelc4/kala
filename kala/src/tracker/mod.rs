@@ -17,7 +17,6 @@ use std::{
     time::Duration,
 };
 
-use crate::error::Result;
 use crate::uprobe::QueueBufferProbe;
 use crate::wire::FrameRecord;
 
@@ -53,23 +52,20 @@ impl FrameTracker {
 
     /// Pull one record off the ring and, if it represents a new frame
     /// from the currently-active buffer, return its duration.
-    pub fn pump(&mut self) -> Result<Option<Duration>> {
+    pub fn pump(&mut self) -> Option<Duration> {
         // The `RingBufItem` borrows `ring` (which borrows `self.probe`),
         // so we copy the bytes out and drop the item before calling
         // `self.record(...)` — otherwise the borrow checker (rightly)
         // refuses the second &mut self.
         let record = {
-            let mut ring = self.probe.ring_buf()?;
-            let Some(item) = ring.next() else {
-                return Ok(None);
-            };
+            let item = self.probe.ring().next()?;
             if item.len() < size_of::<FrameRecord>() {
-                return Ok(None);
+                return None;
             }
             // SAFETY: length checked above.
             unsafe { FrameRecord::from_ring_slice(&item) }
         };
-        Ok(self.record(record))
+        self.record(record)
     }
 
     fn record(&mut self, record: FrameRecord) -> Option<Duration> {
