@@ -49,7 +49,7 @@ jobs:
       # Hand the freshly regenerated asset to the Android job (and any
       # cross job) so it never needs the eBPF toolchain itself.
       - name: Upload regenerated BPF asset
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ebpf-asset
           path: kala/assets/kala-ebpf.bpf.o
