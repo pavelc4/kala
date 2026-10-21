@@ -46,9 +46,26 @@ fn rebuild_asset(manifest_dir: &Path, asset: &PathBuf) -> Result<(), String> {
     let target_dir = out_dir.join("ebpf-target");
     fs::create_dir_all(&target_dir).map_err(|e| format!("create target dir: {e}"))?;
 
-    // Same reasoning as the old build.rs: let `../ebpf/rust-toolchain`
-    // (nightly) drive the nested build; clearing RUSTC/RUSTUP_TOOLCHAIN
-    // keeps cargo's host-toolchain env from overriding it.
+    // Resolve the nightly toolchain's rustc explicitly. Toolchain
+    // managers (and the dtolnay/rust-toolchain action) pre-pend the
+    // *default/installed* toolchain dir to PATH, so a bare `rustc`
+    // inside the nested build can silently resolve to stable — and
+    // build-std then fails looking for rust-src on the wrong one.
+    let rustc = String::from_utf8(
+        Command::new("rustup")
+            .args(["which", "rustc", "--toolchain", "nightly"])
+            .output()
+            .map_err(|e| format!("failed to run rustup which: {e}"))?
+            .stdout,
+    )
+    .map_err(|e| format!("rustup which output not utf-8: {e}"))?;
+    if rustc.trim().is_empty() {
+        return Err("rustup which returned no path for nightly rustc".into());
+    }
+
+    // Let `../ebpf/rust-toolchain` (nightly) drive the nested build;
+    // clearing RUSTC/RUSTUP_TOOLCHAIN keeps cargo's host-toolchain env
+    // from overriding it.
     let host_profile = env::var("PROFILE").unwrap_or_else(|_| "debug".to_string());
     let status = Command::new("cargo")
         .arg("build")
@@ -57,8 +74,10 @@ fn rebuild_asset(manifest_dir: &Path, asset: &PathBuf) -> Result<(), String> {
         .arg(&target_dir)
         .args(if host_profile == "release" { &["--release"][..] } else { &[][..] })
         .current_dir(&ebpf_dir)
+        // The nested cargo must use the nightly rustc — never the
+        // host default on PATH (see note above).
+        .env("RUSTC", rustc.trim())
         .env_remove("RUSTUP_TOOLCHAIN")
-        .env_remove("RUSTC")
         .env_remove("CARGO_TARGET_DIR")
         .env_remove("CARGO_ENCODED_RUSTFLAGS")
         .env_remove("RUSTFLAGS")
