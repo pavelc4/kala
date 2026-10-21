@@ -43,7 +43,7 @@
 //!
 //! `Surface::queueBuffer` is called by every Android frame producer
 //! (NDK, OpenGL, Vulkan, system UI) right before a frame is handed to
-//! SurfaceFlinger. We attach a uprobe to it, capture the buffer
+//! `SurfaceFlinger`. We attach a uprobe to it, capture the buffer
 //! pointer (used as a per-back-buffer key) and the kernel monotonic
 //! timestamp, and submit a [`FrameRecord`](wire::FrameRecord) to a
 //! per-PID ring buffer.
@@ -90,6 +90,11 @@ pub struct FrameProbe {
 
 impl FrameProbe {
     /// Create a probe with no PIDs attached yet.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProbeError`] when the memlock limit cannot be raised
+    /// or the embedded eBPF program fails to initialize.
     pub fn new() -> Result<Self> {
         Ok(Self {
             poll: None,
@@ -100,7 +105,15 @@ impl FrameProbe {
 
     /// Start watching `pid`. Idempotent — re-attaching the same PID is
     /// a no-op so callers don't have to track state.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProbeError`] when the symbol cannot be resolved in
+    /// `libgui.so` or attaching (poll registry rebuild) fails.
     pub fn attach(&mut self, pid: Pid) -> Result<()> {
+        if pid <= 0 {
+            return Err(ProbeError::InvalidPid(pid));
+        }
         if self.targets.contains_key(&pid) {
             return Ok(());
         }
@@ -110,6 +123,11 @@ impl FrameProbe {
     }
 
     /// Stop watching `pid`. Returns `true` if the PID was attached.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProbeError`] when rebuilding the poll registry fails
+    /// after removal; the PID is removed either way.
     pub fn detach(&mut self, pid: Pid) -> Result<bool> {
         let removed = self.targets.remove(&pid).is_some();
         if removed {
@@ -122,30 +140,33 @@ impl FrameProbe {
     /// that arrives. Returns `None` if nothing arrived or there is
     /// nothing attached yet.
     pub fn recv_with_deadline(&mut self, timeout: Duration) -> Option<(Pid, Duration)> {
-        if self.pending.is_empty() {
-            if let Some(poll) = self.poll.as_mut() {
-                let mut events = Events::with_capacity(EVENT_CAPACITY);
-                let _ = poll.poll(&mut events, Some(timeout));
-                self.pending.extend(events.iter().map(pid_from_event));
-            }
-            // Rebuild the poll registry to drop any token whose
-            // backing fd has gone away. Errors here aren't fatal —
-            // the next `recv_with_deadline` will try again.
+        // Nothing queued? Poll once, then rebuild the registry so any
+        // token whose backing fd went away is dropped. (When `poll` is
+        // `None` nothing is attached at all, so rebuilding is a no-op.)
+        // Errors aren't fatal — the next call retries.
+        if self.pending.is_empty()
+            && let Some(poll) = self.poll.as_mut()
+        {
+            let mut events = Events::with_capacity(EVENT_CAPACITY);
+            let _ = poll.poll(&mut events, Some(timeout));
+            self.pending
+                .extend(events.iter().filter_map(pid_from_event));
             let _ = self.rebuild_poll();
         }
 
         loop {
             let pid = self.pending.pop_front()?;
             let tracker = self.targets.get_mut(&pid)?;
-            match tracker.pump() {
-                Ok(Some(duration)) => return Some((pid, duration)),
-                Ok(None) => continue,
-                Err(_) => continue,
+            if let Ok(Some(duration)) = tracker.pump() {
+                return Some((pid, duration));
             }
+            // Either no frame was queued for this PID or the ring
+            // errored — both mean "try the next pending PID".
         }
     }
 
     /// Number of currently attached PIDs.
+    #[must_use]
     pub fn attached(&self) -> usize {
         self.targets.len()
     }
@@ -154,9 +175,12 @@ impl FrameProbe {
         let poll = Poll::new()?;
         for (pid, tracker) in &mut self.targets {
             let fd = tracker.probe.ring_buf()?.as_raw_fd();
+            // `attach` guarantees a positive pid, and a positive i32
+            // always fits usize — this conversion cannot fail.
+            let token = Token(usize::try_from(*pid).expect("pid validated positive in attach"));
             poll.registry().register(
                 &mut SourceFd(&fd),
-                Token(*pid as usize),
+                token,
                 Interest::READABLE,
             )?;
         }
@@ -165,7 +189,10 @@ impl FrameProbe {
     }
 }
 
-fn pid_from_event(event: &Event) -> Pid {
-    let Token(raw) = event.token();
-    raw as Pid
+/// Decode the `Pid` inside a mio token. Tokens were built from
+/// validated PIDs, so anything that fails to narrow is the kernel
+/// handing back a token we never registered — drop it instead of
+/// inventing a frame for a phantom PID.
+fn pid_from_event(event: &Event) -> Option<Pid> {
+    Pid::try_from(event.token().0).ok()
 }
