@@ -8,6 +8,8 @@ use std::io;
 use aya::{EbpfError, maps::MapError, programs::ProgramError};
 use thiserror::Error;
 
+use crate::Pid;
+
 /// Convenience alias used throughout the crate's public API.
 pub type Result<T> = std::result::Result<T, ProbeError>;
 
@@ -36,4 +38,9 @@ pub enum ProbeError {
     /// resolvable inside `/system/lib64/libgui.so` for this PID.
     #[error("Surface::queueBuffer symbol not found in libgui.so")]
     SymbolNotFound,
+
+    /// The caller passed a non-positive PID. Linux PIDs start at 1;
+    /// anything else can never be watched.
+    #[error("invalid pid: expected a positive Linux pid, got {0}")]
+    InvalidPid(Pid),
 }
