@@ -45,7 +45,7 @@ fn main() {
     }
 
     if count > 0 {
-        let avg = total / count as u32;
+        let avg = total / u32::try_from(count).unwrap_or(u32::MAX);
         eprintln!(
             "summary: {count} frames, avg {:.2} ms ({:.1} fps)",
             avg.as_secs_f64() * 1e3,
