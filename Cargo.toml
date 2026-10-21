@@ -1,0 +1,24 @@
+# kala workspace.
+#
+# `kala/`       — user-space library that consumers depend on. Built on
+#                 stable Rust. Embeds the pre-built BPF object via
+#                 `include_bytes_aligned!` so downstream crates don't
+#                 need a BPF toolchain at consume time. This is the
+#                 crate that gets published to crates.io.
+#
+# `kala-ebpf/`  — kernel-side eBPF program, compiled for
+#                 `bpfel-unknown-none` with nightly Rust. Has its own
+#                 standalone workspace declaration; it is NOT a member
+#                 of the outer workspace, otherwise cargo would try to
+#                 resolve aya-ebpf for the host target.
+
+[workspace]
+members = ["kala"]
+resolver = "3"
+
+[workspace.package]
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/pavelc4/kala"
+authors = ["Pavelc4 <pavelc4@users.noreply.github.com>"]
+rust-version = "1.85"
