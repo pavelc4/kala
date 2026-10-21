@@ -97,10 +97,12 @@ impl QueueBufferProbe {
 
 impl Drop for QueueBufferProbe {
     fn drop(&mut self) {
-        if let Some(program_any) = self.bpf.program_mut(PROGRAM_NAME) {
-            if let Ok(program) = TryInto::<&mut UProbe>::try_into(program_any) {
-                let _ = program.unload();
-            }
+        if let Some(program) = self
+            .bpf
+            .program_mut(PROGRAM_NAME)
+            .and_then(|p| TryInto::<&mut UProbe>::try_into(p).ok())
+        {
+            let _ = program.unload();
         }
     }
 }
