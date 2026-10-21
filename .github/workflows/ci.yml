@@ -15,22 +15,33 @@ jobs:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      # A fresh checkout has no `assets/kala-ebpf.bpf.o` (it is not in
-      # git), so build.rs has to regenerate it here once. build-std
-      # needs rust-src on the pinned nightly; bpf-linker comes from the
-      # official prebuilt musl tarball — upstream explicitly warns
-      # against `cargo install` builds (LLVM linkage hell).
+      # A fresh checkout has no `assets/kala-ebpf.bpf.o` (not in git),
+      # so build.rs would trigger its auto-rebuild inside the *host*
+      # cargo run — where the host stable rustc can shadow the pinned
+      # nightly via PATH. Build the object out-of-band instead: inside
+      # the ebpf crate dir (NOT the workspace root), with the nightly
+      # cargo/rustc resolved explicitly and build-std on the command
+      # line. Dropping the asset in place makes build.rs a no-op for
+      # every later step.
       - name: Install eBPF build toolchain
         run: |
           rustup toolchain install nightly --profile minimal --component rust-src
-          # Idempotent belt-and-suspenders: some runners resolve the
-          # channel differently than the install step above.
           rustup component add rust-src --toolchain nightly
           mkdir -p "$HOME/.local/bin"
           curl -fLO https://github.com/aya-rs/bpf-linker/releases/latest/download/bpf-linker-x86_64-unknown-linux-musl.tar.zst
           tar -xpf bpf-linker-x86_64-unknown-linux-musl.tar.zst -C "$HOME/.local/bin"
           rm -f bpf-linker-x86_64-unknown-linux-musl.tar.zst
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Build embedded eBPF object
+        run: |
+          cd ebpf
+          RUSTC="$(rustup which rustc --toolchain nightly)" \
+            "$(rustup which cargo --toolchain nightly)" build \
+            -Zbuild-std=core --target-dir ../ebpf-target
+          mkdir -p ../kala/assets
+          cp ../ebpf-target/bpfel-unknown-none/debug/kala-ebpf-kernel ../kala/assets/kala-ebpf.bpf.o
+          echo "--- eBPF asset:"
+          sha256sum ../kala/assets/kala-ebpf.bpf.o
       - run: cargo clippy -p kala-ebpf --all-targets -- -D warnings -W clippy::pedantic
       - run: cargo test -p kala-ebpf
       # Packaging sanity: asset + docs + ready for crates.io upload.
