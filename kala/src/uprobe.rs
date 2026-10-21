@@ -1,0 +1,106 @@
+//! Per-PID uprobe handle.
+//!
+//! Owns one [`aya::Ebpf`] instance and the uprobe program inside it.
+//! On drop the program is automatically unloaded.
+
+use aya::{
+    Ebpf,
+    maps::{MapData, RingBuf},
+    programs::UProbe,
+};
+
+use crate::error::{ProbeError, Result};
+use crate::loader;
+
+const PROGRAM_NAME: &str = "kala_frame_probe";
+const LIBGUI_PATH: &str = "/system/lib64/libgui.so";
+
+// Mangled `android::Surface::queueBuffer` family symbols. AOSP has
+// refactored the signature several times; we try the most reliable
+// entry first and fall back to internal overloads.
+//
+// 1. `Surface::hook_queueBuffer(ANativeWindow*, ANativeWindowBuffer*, int)`
+//    — the C-API trampoline used by every NDK / GL / Vulkan caller.
+//      Signature has been stable since the very first Surface
+//      implementation, so this is the most reliable probe point on
+//      modern devices.
+//
+// 2. `Surface::queueBufferInternal(ANativeWindow*, ANativeWindowBuffer*, int)`
+//    — worker function called from inside hook_queueBuffer. Useful
+//      if a vendor inlines (1) away.
+//
+// 3. Original AOSP <= 10 entry, before the sp<GraphicBuffer> refactor.
+//
+// 4. Same as (3) with the extra SurfaceQueueBufferOutput* parameter.
+//
+// 5. Modern overload taking `sp<GraphicBuffer>&&`. Less ideal because
+//    arg(1) here is a smart-pointer, not a raw buffer ptr — still
+//    works as a uniqueness key for dedup, though.
+const QUEUE_BUFFER_SYMBOLS: &[&str] = &[
+    // hook_queueBuffer (C trampoline) — best probe point on modern Android.
+    "_ZN7android7Surface16hook_queueBufferEP13ANativeWindowP19ANativeWindowBufferi",
+    // queueBufferInternal (called by hook_queueBuffer).
+    "_ZN7android7Surface19queueBufferInternalEP13ANativeWindowP19ANativeWindowBufferi",
+    // Legacy direct entries (AOSP <= 10).
+    "_ZN7android7Surface11queueBufferEP19ANativeWindowBufferi",
+    "_ZN7android7Surface11queueBufferEP19ANativeWindowBufferiPNS_24SurfaceQueueBufferOutputE",
+    // Modern sp<GraphicBuffer> overloads (AOSP 12+).
+    "_ZN7android7Surface11queueBufferEONS_2spINS_13GraphicBufferEEEiPNS_24SurfaceQueueBufferOutputE",
+    "_ZN7android7Surface11queueBufferERKNS_2spINS_13GraphicBufferEEERKNS1_INS_5FenceEEEPNS_24SurfaceQueueBufferOutputE",
+];
+
+pub struct QueueBufferProbe {
+    bpf: Ebpf,
+}
+
+impl QueueBufferProbe {
+    /// Attach a fresh eBPF program to the given PID.
+    pub fn attach(pid: i32) -> Result<Self> {
+        let mut bpf = loader::load()?;
+
+        {
+            let program: &mut UProbe = bpf
+                .program_mut(PROGRAM_NAME)
+                .ok_or(ProbeError::SymbolNotFound)?
+                .try_into()?;
+            program.load()?;
+
+            let mut attached = false;
+            let mut last_err: Option<ProbeError> = None;
+            for symbol in QUEUE_BUFFER_SYMBOLS {
+                match program.attach(Some(*symbol), 0, LIBGUI_PATH, Some(pid)) {
+                    Ok(_) => {
+                        attached = true;
+                        break;
+                    }
+                    Err(e) => last_err = Some(ProbeError::from(e)),
+                }
+            }
+            if !attached {
+                return Err(last_err.unwrap_or(ProbeError::SymbolNotFound));
+            }
+        }
+
+        Ok(Self { bpf })
+    }
+
+    /// Borrow the ring-buf map for polling/reading.
+    pub fn ring_buf(&mut self) -> Result<RingBuf<&mut MapData>> {
+        let map = self
+            .bpf
+            .map_mut("RING_BUF")
+            .ok_or(ProbeError::SymbolNotFound)?;
+        let ring = RingBuf::try_from(map)?;
+        Ok(ring)
+    }
+}
+
+impl Drop for QueueBufferProbe {
+    fn drop(&mut self) {
+        if let Some(program_any) = self.bpf.program_mut(PROGRAM_NAME) {
+            if let Ok(program) = TryInto::<&mut UProbe>::try_into(program_any) {
+                let _ = program.unload();
+            }
+        }
+    }
+}
