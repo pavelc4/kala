@@ -43,6 +43,6 @@ fn bump_memlock() {
     // takes a pointer to one. The kernel will either accept it or
     // return -1, both safe outcomes.
     unsafe {
-        libc::setrlimit(libc::RLIMIT_MEMLOCK, &unlimited);
+        libc::setrlimit(libc::RLIMIT_MEMLOCK, &raw const unlimited);
     }
 }
