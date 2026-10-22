@@ -50,22 +50,22 @@ impl FrameTracker {
         }
     }
 
-    /// Pull one record off the ring and, if it represents a new frame
-    /// from the currently-active buffer, return its duration.
+    /// Pull records off the ring until a valid active-buffer frametime is
+    /// produced, or the ring buffer is exhausted.
     pub fn pump(&mut self) -> Option<Duration> {
-        // The `RingBufItem` borrows `ring` (which borrows `self.probe`),
-        // so we copy the bytes out and drop the item before calling
-        // `self.record(...)` — otherwise the borrow checker (rightly)
-        // refuses the second &mut self.
-        let record = {
-            let item = self.probe.ring().next()?;
-            if item.len() < size_of::<FrameRecord>() {
-                return None;
+        loop {
+            let record = {
+                let item = self.probe.ring().next()?;
+                if item.len() < size_of::<FrameRecord>() {
+                    continue;
+                }
+                // SAFETY: length checked above.
+                unsafe { FrameRecord::from_ring_slice(&item) }
+            };
+            if let Some(duration) = self.record(record) {
+                return Some(duration);
             }
-            // SAFETY: length checked above.
-            unsafe { FrameRecord::from_ring_slice(&item) }
-        };
-        self.record(record)
+        }
     }
 
     fn record(&mut self, record: FrameRecord) -> Option<Duration> {

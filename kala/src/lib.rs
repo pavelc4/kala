@@ -162,25 +162,27 @@ impl FrameProbe {
     /// runs dry. Returns `None` if nothing arrived or there is nothing
     /// attached yet.
     pub fn recv_with_deadline(&mut self, timeout: Duration) -> Option<(Pid, Duration)> {
-        // Errors aren't fatal — the next call retries. Every attached
-        // ring fd is registered exactly once (on attach) and
-        // deregistered on detach, so the registry only ever holds fds
-        // this process still owns — no periodic registry rebuild.
-        if self.pending.is_empty() {
+        loop {
+            if let Some(pid) = self.pending.pop_front() {
+                if let Some(tracker) = self.targets.get_mut(&pid) {
+                    if let Some(duration) = tracker.pump() {
+                        // Re-queue so remaining records in this ring buffer get pumped
+                        // on subsequent calls without waiting on edge-triggered epoll.
+                        self.pending.push_back(pid);
+                        return Some((pid, duration));
+                    }
+                }
+                // When tracker.pump() returns None, this PID's ring buffer is completely drained.
+                continue;
+            }
+
             self.events.clear();
             let _ = self.poll.poll(&mut self.events, Some(timeout));
+            if self.events.is_empty() {
+                return None;
+            }
             self.pending
                 .extend(self.events.iter().filter_map(pid_from_event));
-        }
-
-        loop {
-            let pid = self.pending.pop_front()?;
-            let tracker = self.targets.get_mut(&pid)?;
-            if let Some(duration) = tracker.pump() {
-                return Some((pid, duration));
-            }
-            // Either no frame was queued for this PID or the ring
-            // errored — both mean "try the next pending PID".
         }
     }
 
