@@ -24,10 +24,10 @@ include = [
 ]
 
 [dependencies]
-aya = "0.13"
-libc = "0.2"
-mio = { version = "1", features = ["os-ext"] }
-thiserror = "2"
+aya = "0.13.1"
+libc = "0.2.191"
+mio = { version = "1.2.4", features = ["os-ext"] }
+thiserror = "2.0.21"
 
 [[example]]
 name = "basic"
