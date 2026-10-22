@@ -64,7 +64,7 @@ pub use error::{ProbeError, Result};
 use std::{
     collections::{HashMap, VecDeque},
     os::unix::io::AsRawFd,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use mio::{Events, Interest, Poll, Token, event::Event, unix::SourceFd};
@@ -74,6 +74,21 @@ use uprobe::QueueBufferProbe;
 
 /// Linux process id.
 pub type Pid = i32;
+
+/// Telemetry event returned by [`FrameProbe::recv_with_stats`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FrameEvent {
+    /// Linux process id that emitted the frame.
+    pub pid: Pid,
+    /// Measured frametime delta.
+    pub frametime: Duration,
+    /// Execution time of the `pump()` call in nanoseconds.
+    pub pump_latency_ns: u64,
+    /// Ring records consumed to produce this frame.
+    pub ring_records: usize,
+    /// Sequence count of frames drained in this epoll burst (1-based).
+    pub burst_count: usize,
+}
 
 const EVENT_CAPACITY: usize = 1024;
 
@@ -87,6 +102,7 @@ pub struct FrameProbe {
     events: Events,
     targets: HashMap<Pid, FrameTracker>,
     pending: VecDeque<Pid>,
+    burst_count: usize,
 }
 
 impl FrameProbe {
@@ -103,6 +119,7 @@ impl FrameProbe {
             events: Events::with_capacity(EVENT_CAPACITY),
             targets: HashMap::new(),
             pending: VecDeque::with_capacity(EVENT_CAPACITY),
+            burst_count: 0,
         })
     }
 
@@ -131,11 +148,9 @@ impl FrameProbe {
         let fd = tracker.probe.ring().as_raw_fd();
         // `pid` was validated positive above; this cannot fail.
         let token = Token(usize::try_from(pid).expect("pid validated positive in attach"));
-        self.poll.registry().register(
-            &mut SourceFd(&fd),
-            token,
-            Interest::READABLE,
-        )?;
+        self.poll
+            .registry()
+            .register(&mut SourceFd(&fd), token, Interest::READABLE)?;
         self.targets.insert(pid, tracker);
         Ok(())
     }
@@ -176,6 +191,44 @@ impl FrameProbe {
                 continue;
             }
 
+            self.events.clear();
+            let _ = self.poll.poll(&mut self.events, Some(timeout));
+            if self.events.is_empty() {
+                return None;
+            }
+            self.pending
+                .extend(self.events.iter().filter_map(pid_from_event));
+        }
+    }
+
+    /// Drains the pending queue, polling the ring buffers only when it
+    /// runs dry. Returns detailed telemetry per frame including execution
+    /// latency of the `pump()` call and burst count since last epoll wait.
+    pub fn recv_with_stats(&mut self, timeout: Duration) -> Option<FrameEvent> {
+        loop {
+            if let Some(pid) = self.pending.pop_front() {
+                if let Some(tracker) = self.targets.get_mut(&pid) {
+                    let t0 = Instant::now();
+                    let (duration, records) = tracker.pump_counted();
+                    let pump_latency_ns =
+                        u64::try_from(t0.elapsed().as_nanos()).unwrap_or(u64::MAX);
+                    if let Some(duration) = duration {
+                        self.burst_count += 1;
+                        self.pending.push_back(pid);
+                        return Some(FrameEvent {
+                            pid,
+                            frametime: duration,
+                            pump_latency_ns,
+                            ring_records: records,
+                            burst_count: self.burst_count,
+                        });
+                    }
+                }
+                // When tracker.pump_counted() returns None, this PID's ring buffer is completely drained.
+                continue;
+            }
+
+            self.burst_count = 0;
             self.events.clear();
             let _ = self.poll.poll(&mut self.events, Some(timeout));
             if self.events.is_empty() {

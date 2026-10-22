@@ -51,11 +51,16 @@ impl FrameTracker {
     }
 
     /// Pull records off the ring until a valid active-buffer frametime is
-    /// produced, or the ring buffer is exhausted.
-    pub fn pump(&mut self) -> Option<Duration> {
+    /// produced, or the ring buffer is exhausted. Returns the frametime and
+    /// the number of ring records consumed in this call.
+    pub fn pump_counted(&mut self) -> (Option<Duration>, usize) {
+        let mut count = 0;
         loop {
             let record = {
-                let item = self.probe.ring().next()?;
+                let Some(item) = self.probe.ring().next() else {
+                    return (None, count);
+                };
+                count += 1;
                 if item.len() < size_of::<FrameRecord>() {
                     continue;
                 }
@@ -63,9 +68,15 @@ impl FrameTracker {
                 unsafe { FrameRecord::from_ring_slice(&item) }
             };
             if let Some(duration) = self.record(record) {
-                return Some(duration);
+                return (Some(duration), count);
             }
         }
+    }
+
+    /// Pull records off the ring until a valid active-buffer frametime is
+    /// produced, or the ring buffer is exhausted.
+    pub fn pump(&mut self) -> Option<Duration> {
+        self.pump_counted().0
     }
 
     fn record(&mut self, record: FrameRecord) -> Option<Duration> {
@@ -112,7 +123,11 @@ impl BufferTimes {
             .map(|(buffer, _)| *buffer)?;
 
         if active_buffer == record.buffer {
-            self.per_buffer.get(&record.buffer)?.durations.front().copied()
+            self.per_buffer
+                .get(&record.buffer)?
+                .durations
+                .front()
+                .copied()
         } else {
             None
         }

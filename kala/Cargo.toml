@@ -32,3 +32,19 @@ thiserror = "2"
 [[example]]
 name = "basic"
 path = "examples/basic.rs"
+
+[[example]]
+name = "bench"
+path = "examples/bench.rs"
+
+[[example]]
+name = "fps_monitor"
+path = "examples/fps_monitor.rs"
+
+[[example]]
+name = "multi_target"
+path = "examples/multi_target.rs"
+
+[[example]]
+name = "jank_detector"
+path = "examples/jank_detector.rs"

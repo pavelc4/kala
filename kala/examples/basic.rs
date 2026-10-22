@@ -6,7 +6,10 @@
 //! adb shell su -c "/data/local/tmp/basic <pid> [seconds]"   # default 10
 //! ```
 
-use std::{env, process, time::{Duration, Instant}};
+use std::{
+    env, process,
+    time::{Duration, Instant},
+};
 
 use kala_ebpf::FrameProbe;
 

@@ -10,7 +10,11 @@
 // `bpf-linker` and the pinned nightly toolchain) and refreshes the
 // asset in place. Consumer builds never enter that branch.
 
-use std::{env, fs, path::{Path, PathBuf}, process::Command};
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 const EBPF_CRATE_REL: &str = "../ebpf";
 const EBPF_TARGET: &str = "bpfel-unknown-none";
@@ -72,7 +76,11 @@ fn rebuild_asset(manifest_dir: &Path, asset: &PathBuf) -> Result<(), String> {
         .args(["--target", EBPF_TARGET])
         .arg("--target-dir")
         .arg(&target_dir)
-        .args(if host_profile == "release" { &["--release"][..] } else { &[][..] })
+        .args(if host_profile == "release" {
+            &["--release"][..]
+        } else {
+            &[][..]
+        })
         .current_dir(&ebpf_dir)
         // The nested cargo must use the nightly rustc — never the
         // host default on PATH (see note above).
@@ -89,10 +97,17 @@ fn rebuild_asset(manifest_dir: &Path, asset: &PathBuf) -> Result<(), String> {
 
     let built = target_dir
         .join(EBPF_TARGET)
-        .join(if host_profile == "release" { "release" } else { "debug" })
+        .join(if host_profile == "release" {
+            "release"
+        } else {
+            "debug"
+        })
         .join(EBPF_BIN_NAME);
     if !built.exists() {
-        return Err(format!("expected eBPF artifact at {}, not found", built.display()));
+        return Err(format!(
+            "expected eBPF artifact at {}, not found",
+            built.display()
+        ));
     }
 
     fs::create_dir_all(asset.parent().unwrap()).map_err(|e| format!("create assets dir: {e}"))?;

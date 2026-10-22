@@ -58,12 +58,19 @@ static TEST_ALLOCATOR: alloc_count::Counting = alloc_count::Counting;
 fn single_buffer_yields_deltas_after_first_sight() {
     let mut t = BufferTimes::default();
     let frame_ns: u64 = 16_666_667; // 60 Hz
-    assert!(t
-        .record(FrameRecord { ktime_ns: 1_000, buffer: 7 })
-        .is_none());
+    assert!(
+        t.record(FrameRecord {
+            ktime_ns: 1_000,
+            buffer: 7
+        })
+        .is_none()
+    );
     for i in 1u64..4 {
         let ft = t
-            .record(FrameRecord { ktime_ns: 1_000 + frame_ns * i, buffer: 7 })
+            .record(FrameRecord {
+                ktime_ns: 1_000 + frame_ns * i,
+                buffer: 7,
+            })
             .expect("steady single-buffer deltas must surface");
         assert_eq!(ft, Duration::from_nanos(frame_ns));
     }
@@ -91,7 +98,10 @@ fn uneven_interleave_surfaces_uniquely_longest_buffer() {
         if is_a {
             a_events += 1;
         }
-        if let Some(ft) = t.record(FrameRecord { ktime_ns: frame_ns * i, buffer }) {
+        if let Some(ft) = t.record(FrameRecord {
+            ktime_ns: frame_ns * i,
+            buffer,
+        }) {
             yields += 1;
             assert_eq!(ft, Duration::from_nanos(2 * frame_ns));
         }
@@ -106,7 +116,10 @@ fn uneven_interleave_surfaces_uniquely_longest_buffer() {
 fn duplicate_events_do_not_double_count() {
     let mut t = BufferTimes::default();
     let frame_ns: u64 = 16_666_667;
-    let fr = |ns: u64| FrameRecord { ktime_ns: ns, buffer: 9 };
+    let fr = |ns: u64| FrameRecord {
+        ktime_ns: ns,
+        buffer: 9,
+    };
     assert!(t.record(fr(frame_ns)).is_none());
     assert_eq!(
         t.record(fr(2 * frame_ns)),
@@ -125,7 +138,10 @@ fn duplicate_events_do_not_double_count() {
 fn steady_frames_keep_flowing_after_history_cap() {
     let mut t = BufferTimes::default();
     let frame_ns: u64 = 16_666_667;
-    let fr = |ns: u64| FrameRecord { ktime_ns: ns, buffer: 5 };
+    let fr = |ns: u64| FrameRecord {
+        ktime_ns: ns,
+        buffer: 5,
+    };
     let events = PER_BUFFER_HISTORY + 40;
     let mut yielded = 0;
     for i in 1..=events {
@@ -163,7 +179,10 @@ fn steady_state_is_allocation_free() {
     let mut check = |t: &mut BufferTimes, i: u64| {
         let (b, is_a) = buffer_for(i);
         let idx = usize::try_from(b - 0x10).unwrap_or(0);
-        let ft = t.record(FrameRecord { ktime_ns: frame_ns * i, buffer: b });
+        let ft = t.record(FrameRecord {
+            ktime_ns: frame_ns * i,
+            buffer: b,
+        });
         if seen[idx] {
             assert_eq!(ft.is_some(), is_a, "interleave must surface A-only");
         } else {
@@ -184,4 +203,276 @@ fn steady_state_is_allocation_free() {
     }
     let after = alloc_count::ALLOCS.load(Ordering::Relaxed);
     assert_eq!(after - before, 0, "steady-state frame ingestion allocated");
+}
+
+// Double-buffering: alternating buffers A and B in a 2-buffer swapchain.
+#[test]
+fn double_buffering_interleave_yields_steady_deltas() {
+    let mut t = BufferTimes::default();
+    let frame_ns: u64 = 16_666_667; // 60 Hz
+    let buf_a = 0xA0;
+    let buf_b = 0xB0;
+
+    // First sightings return None
+    assert!(
+        t.record(FrameRecord {
+            ktime_ns: frame_ns,
+            buffer: buf_a
+        })
+        .is_none()
+    );
+    assert!(
+        t.record(FrameRecord {
+            ktime_ns: 2 * frame_ns,
+            buffer: buf_b
+        })
+        .is_none()
+    );
+
+    let mut yields = 0;
+    for i in 3u64..=30 {
+        let buf = if i % 2 == 1 { buf_a } else { buf_b };
+        if let Some(ft) = t.record(FrameRecord {
+            ktime_ns: i * frame_ns,
+            buffer: buf,
+        }) {
+            yields += 1;
+            // Each individual buffer is seen every 2 frames
+            assert_eq!(ft, Duration::from_nanos(2 * frame_ns));
+        }
+    }
+    assert!(
+        yields > 0,
+        "double-buffering should consistently produce frame deltas"
+    );
+}
+
+// Quad-buffering: 4 back-buffers in flight (modern Vulkan/compositor swapchain).
+#[test]
+fn quad_buffering_pipeline_yields_stable_deltas() {
+    let mut t = BufferTimes::default();
+    let frame_ns: u64 = 8_333_333; // 120 Hz
+    let buffers = [0x100, 0x101, 0x102, 0x103];
+
+    // Seed first sightings
+    for (i, &b) in buffers.iter().enumerate() {
+        assert!(
+            t.record(FrameRecord {
+                ktime_ns: (i as u64) * frame_ns,
+                buffer: b
+            })
+            .is_none()
+        );
+    }
+
+    let mut total_yielded = 0;
+    for i in 4u64..=48 {
+        let buf = buffers[(i as usize) % 4];
+        if let Some(ft) = t.record(FrameRecord {
+            ktime_ns: i * frame_ns,
+            buffer: buf,
+        }) {
+            total_yielded += 1;
+            assert_eq!(ft, Duration::from_nanos(4 * frame_ns));
+        }
+    }
+    assert!(
+        total_yielded >= 5,
+        "quad-buffering pipeline must maintain active buffer tracking"
+    );
+}
+
+// Buffer recreation / surface resize: old buffers disappear, new buffer pointers appear.
+#[test]
+fn buffer_reallocation_adapts_to_new_handles() {
+    let mut t = BufferTimes::default();
+    let frame_ns: u64 = 16_666_667;
+
+    // Phase 1: running with buffers 0x10, 0x11
+    for i in 1u64..=10 {
+        let buf = if i % 2 == 0 { 0x10 } else { 0x11 };
+        t.record(FrameRecord {
+            ktime_ns: i * frame_ns,
+            buffer: buf,
+        });
+    }
+
+    // Phase 2: orientation change / surface resize -> buffers replaced with 0x20, 0x21
+    let mut phase2_yielded = 0;
+    for i in 11u64..=30 {
+        let buf = if i % 2 == 0 { 0x20 } else { 0x21 };
+        if let Some(ft) = t.record(FrameRecord {
+            ktime_ns: i * frame_ns,
+            buffer: buf,
+        }) {
+            phase2_yielded += 1;
+            assert_eq!(ft, Duration::from_nanos(2 * frame_ns));
+        }
+    }
+    assert!(
+        phase2_yielded > 0,
+        "must adapt to newly allocated buffers after surface resize"
+    );
+}
+
+// Frame drop / stutter spike: a sudden delay (33ms instead of 8.33ms) must be captured accurately.
+#[test]
+fn frame_drop_spike_correctly_detected() {
+    let mut t = BufferTimes::default();
+    let frame_ns: u64 = 8_333_333; // 120 Hz
+    let buf = 0x55;
+
+    // Warm up single buffer
+    assert!(
+        t.record(FrameRecord {
+            ktime_ns: frame_ns,
+            buffer: buf
+        })
+        .is_none()
+    );
+    for i in 2u64..=5 {
+        assert_eq!(
+            t.record(FrameRecord {
+                ktime_ns: i * frame_ns,
+                buffer: buf
+            }),
+            Some(Duration::from_nanos(frame_ns))
+        );
+    }
+
+    // Sudden 3-frame drop spike: jumps from 5 * frame_ns to 9 * frame_ns (4x delay = ~33.3ms)
+    let spike_ns = 9 * frame_ns;
+    let expected_spike = Duration::from_nanos(4 * frame_ns);
+    assert_eq!(
+        t.record(FrameRecord {
+            ktime_ns: spike_ns,
+            buffer: buf
+        }),
+        Some(expected_spike),
+        "frame spike must be surfaced accurately"
+    );
+
+    // Resumes smooth 120 Hz
+    assert_eq!(
+        t.record(FrameRecord {
+            ktime_ns: spike_ns + frame_ns,
+            buffer: buf
+        }),
+        Some(Duration::from_nanos(frame_ns))
+    );
+}
+
+// Timestamp retrograde and zero-delta resiliency (jitter in kernel monotonic clock).
+#[test]
+fn timestamp_retrograde_and_zero_delta_gracefully_handled() {
+    let mut t = BufferTimes::default();
+    let buf = 0x77;
+
+    assert!(
+        t.record(FrameRecord {
+            ktime_ns: 10_000,
+            buffer: buf
+        })
+        .is_none()
+    );
+    assert_eq!(
+        t.record(FrameRecord {
+            ktime_ns: 20_000,
+            buffer: buf
+        }),
+        Some(Duration::from_nanos(10_000))
+    );
+
+    // Duplicate timestamp (dt = 0) -> None
+    assert!(
+        t.record(FrameRecord {
+            ktime_ns: 20_000,
+            buffer: buf
+        })
+        .is_none()
+    );
+
+    // Retrograde timestamp (clock jitter or out of order) -> saturating_sub yields 0 -> None
+    assert!(
+        t.record(FrameRecord {
+            ktime_ns: 15_000,
+            buffer: buf
+        })
+        .is_none()
+    );
+
+    // Recovers smoothly on next monotonic advance
+    assert_eq!(
+        t.record(FrameRecord {
+            ktime_ns: 35_000,
+            buffer: buf
+        }),
+        Some(Duration::from_nanos(20_000))
+    );
+}
+
+// Variable refresh rate (VRR): switching dynamically between 60Hz and 120Hz.
+#[test]
+fn variable_refresh_rate_dynamically_tracked() {
+    let mut t = BufferTimes::default();
+    let buf = 0x88;
+    let hz60_ns: u64 = 16_666_667;
+    let hz120_ns: u64 = 8_333_333;
+
+    let mut current_ns = 1_000_000;
+    assert!(
+        t.record(FrameRecord {
+            ktime_ns: current_ns,
+            buffer: buf
+        })
+        .is_none()
+    );
+
+    // 60 Hz phase (5 frames)
+    for _ in 0..5 {
+        current_ns += hz60_ns;
+        assert_eq!(
+            t.record(FrameRecord {
+                ktime_ns: current_ns,
+                buffer: buf
+            }),
+            Some(Duration::from_nanos(hz60_ns))
+        );
+    }
+
+    // Switches to 120 Hz phase (5 frames)
+    for _ in 0..5 {
+        current_ns += hz120_ns;
+        assert_eq!(
+            t.record(FrameRecord {
+                ktime_ns: current_ns,
+                buffer: buf
+            }),
+            Some(Duration::from_nanos(hz120_ns))
+        );
+    }
+}
+
+// Heavy churn: thousands of frames do not cause memory to grow unbounded.
+#[test]
+fn heavy_churn_memory_bound() {
+    let mut t = BufferTimes::default();
+    let frame_ns: u64 = 8_333_333;
+    let buffers = [0x301, 0x302, 0x303];
+
+    for i in 1u64..=10_000 {
+        let buf = buffers[(i as usize) % 3];
+        t.record(FrameRecord {
+            ktime_ns: i * frame_ns,
+            buffer: buf,
+        });
+    }
+
+    // Verify per-buffer queue does not exceed PER_BUFFER_HISTORY cap
+    for history in t.per_buffer.values() {
+        assert!(
+            history.durations.len() <= PER_BUFFER_HISTORY,
+            "history queue must strictly obey PER_BUFFER_HISTORY cap"
+        );
+    }
 }
