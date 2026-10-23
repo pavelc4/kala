@@ -80,15 +80,15 @@ jobs:
           VER="${{ steps.vars.outputs.version }}"
           TAG="${{ steps.vars.outputs.tag }}"
 
-          echo "Updating version in kala/Cargo.toml to $VER..."
-          sed -i "s/^version = \".*\"/version = \"$VER\"/" kala/Cargo.toml
+          echo "Updating version in Cargo.toml files to $VER..."
+          sed -i "s/^version = \".*\"/version = \"$VER\"/" kala/Cargo.toml ebpf/Cargo.toml 2>/dev/null || true
 
           cargo check -p kala-ebpf >/dev/null 2>&1 || true
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add kala/Cargo.toml Cargo.lock
+          git add kala/Cargo.toml ebpf/Cargo.toml Cargo.lock
           if ! git diff --cached --quiet; then
             git commit -m "chore(release): bump version to $TAG"
           else
@@ -96,9 +96,9 @@ jobs:
           fi
 
           if [ "${{ github.event.inputs.dry_run }}" != "true" ]; then
-            git tag -a "$TAG" -m "Release $TAG"
+            git tag -fa "$TAG" -m "Release $TAG"
             git push origin HEAD:main
-            git push origin "$TAG"
+            git push origin "$TAG" --force
           else
             echo "Dry run: skipping git push"
           fi
@@ -176,40 +176,34 @@ jobs:
           STRIP="${{ steps.ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
           BIN_DIR="target/aarch64-linux-android/release/examples"
           OUT_DIR="dist"
-          mkdir -p "$OUT_DIR/kala-android-binaries"
+          mkdir -p "$OUT_DIR"
 
           for bin in basic bench fps_monitor jank_detector multi_target; do
             if [ -f "$BIN_DIR/$bin" ]; then
               "$STRIP" --strip-all "$BIN_DIR/$bin" 2>/dev/null || strip --strip-all "$BIN_DIR/$bin" 2>/dev/null || true
-              cp "$BIN_DIR/$bin" "$OUT_DIR/kala-android-binaries/kala-$bin"
+              cp "$BIN_DIR/$bin" "$OUT_DIR/kala-$bin"
+              (cd "$OUT_DIR" && sha256sum "kala-$bin" > "kala-$bin.sha256")
             fi
           done
 
-          cp kala/assets/kala-ebpf.bpf.o "$OUT_DIR/kala-android-binaries/" 2>/dev/null || true
+          cp kala/assets/kala-ebpf.bpf.o "$OUT_DIR/kala-ebpf.bpf.o" 2>/dev/null || true
+          (cd "$OUT_DIR" && sha256sum kala-ebpf.bpf.o > kala-ebpf.bpf.o.sha256)
 
           TAR_NAME="kala-${TAG}-aarch64-android.tar.gz"
           (
             cd "$OUT_DIR"
-            tar -czf "../$TAR_NAME" kala-android-binaries
+            tar -czf "$TAR_NAME" kala-basic kala-bench kala-fps_monitor kala-jank_detector kala-multi_target kala-ebpf.bpf.o
+            sha256sum "$TAR_NAME" > "${TAR_NAME}.sha256"
           )
-
-          sha256sum "$TAR_NAME" > "${TAR_NAME}.sha256"
-          sha256sum kala/assets/kala-ebpf.bpf.o > "${OUT_DIR}/kala-ebpf.bpf.o.sha256"
-
-          echo "tar_name=$TAR_NAME" >> $GITHUB_OUTPUT
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
-        if: ${{ github.event.inputs.dry_run != true }}
+        if: ${{ github.event.inputs.dry_run != 'true' }}
         with:
           tag_name: ${{ needs.publish-crates.outputs.tag || github.ref_name }}
           name: Release ${{ needs.publish-crates.outputs.tag || github.ref_name }}
           generate_release_notes: true
-          files: |
-            ${{ steps.package.outputs.tar_name }}
-            ${{ steps.package.outputs.tar_name }}.sha256
-            kala/assets/kala-ebpf.bpf.o
-            dist/kala-ebpf.bpf.o.sha256
+          files: dist/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -220,7 +214,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Telegram Notification (Release)
-        if: ${{ needs.build-android-and-release.result == 'success' && needs.publish-crates.result == 'success' && env.BOT_TOKEN != '' }}
+        if: ${{ needs.build-android-and-release.result == 'success' && needs.publish-crates.result == 'success' && env.BOT_TOKEN != '' && github.event.inputs.dry_run != 'true' }}
         uses: ./.github/actions/telegram-notify
         with:
           bot_token: ${{ secrets.BOT_TOKEN }}
@@ -231,6 +225,19 @@ jobs:
             <b>Kala v${{ needs.publish-crates.outputs.version }} Released!</b>
 
             <a href="https://github.com/${{ github.repository }}/releases/tag/${{ needs.publish-crates.outputs.tag }}">GitHub Release</a> • <a href="https://crates.io/crates/kala-ebpf">Crates.io</a>
+
+      - name: Telegram Notification (Dry Run)
+        if: ${{ needs.build-android-and-release.result == 'success' && needs.publish-crates.result == 'success' && env.BOT_TOKEN != '' && github.event.inputs.dry_run == 'true' }}
+        uses: ./.github/actions/telegram-notify
+        with:
+          bot_token: ${{ secrets.BOT_TOKEN }}
+          chat_id: ${{ secrets.CHAT_ID }}
+          type: complete
+          delete_message_id: ${{ needs.setup.outputs.notify_message_id }}
+          caption: |
+            <b>Kala v${{ needs.publish-crates.outputs.version }} Dry Run PASSED</b>
+
+            Build and packaging simulation completed successfully without publishing.
 
       - name: Telegram Notification (Failure)
         if: ${{ (needs.build-android-and-release.result != 'success' || needs.publish-crates.result != 'success') && env.BOT_TOKEN != '' }}
