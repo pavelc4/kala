@@ -4,6 +4,10 @@ on:
     branches: [main]
   pull_request:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -14,6 +18,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
       # A fresh checkout has no `assets/kala-ebpf.bpf.o` (not in git),
       # so build.rs would trigger its auto-rebuild inside the *host*
@@ -28,7 +34,7 @@ jobs:
           rustup toolchain install nightly --profile minimal --component rust-src
           rustup component add rust-src --toolchain nightly
           mkdir -p "$HOME/.local/bin"
-          curl -fLO https://github.com/aya-rs/bpf-linker/releases/latest/download/bpf-linker-x86_64-unknown-linux-musl.tar.zst
+          curl -fLO --retry 3 --retry-delay 2 https://github.com/aya-rs/bpf-linker/releases/latest/download/bpf-linker-x86_64-unknown-linux-musl.tar.zst
           tar -xpf bpf-linker-x86_64-unknown-linux-musl.tar.zst -C "$HOME/.local/bin"
           rm -f bpf-linker-x86_64-unknown-linux-musl.tar.zst
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
@@ -42,6 +48,7 @@ jobs:
           cp ../ebpf-target/bpfel-unknown-none/debug/kala-ebpf-kernel ../kala/assets/kala-ebpf.bpf.o
           echo "--- eBPF asset:"
           sha256sum ../kala/assets/kala-ebpf.bpf.o
+      - run: cargo fmt --all -- --check
       - run: cargo clippy -p kala-ebpf --all-targets -- -D warnings -W clippy::pedantic
       - run: cargo test -p kala-ebpf
       # Packaging sanity: asset + docs + ready for crates.io upload.
@@ -74,6 +81,6 @@ jobs:
           name: ebpf-asset
           path: kala/assets
       - name: cargo build (aarch64-linux-android)
-        run: cargo build -p kala-ebpf --example basic --release --target aarch64-linux-android
+        run: cargo build -p kala-ebpf --examples --release --target aarch64-linux-android
         env:
           CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER: ${{ steps.ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android35-clang
