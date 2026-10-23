@@ -10,10 +10,30 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+  CHAT_ID: ${{ secrets.CHAT_ID }}
 
 jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      notify_message_id: ${{ steps.notify_start.outputs.message_id }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Notify CI Start
+        if: ${{ env.BOT_TOKEN != '' }}
+        id: notify_start
+        uses: ./.github/actions/telegram-notify
+        with:
+          bot_token: ${{ secrets.BOT_TOKEN }}
+          chat_id: ${{ secrets.CHAT_ID }}
+          type: start
+
   check-linux:
     name: check · linux
+    needs: setup
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -63,7 +83,7 @@ jobs:
 
   build-android:
     name: build · android
-    needs: check-linux
+    needs: [setup, check-linux]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -84,3 +104,27 @@ jobs:
         run: cargo build -p kala-ebpf --examples --release --target aarch64-linux-android
         env:
           CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER: ${{ steps.ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android35-clang
+
+  notify:
+    if: ${{ !cancelled() }}
+    needs: [setup, check-linux, build-android]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Telegram Notification (Complete)
+        if: ${{ needs.check-linux.result == 'success' && needs.build-android.result == 'success' && env.BOT_TOKEN != '' }}
+        uses: ./.github/actions/telegram-notify
+        with:
+          bot_token: ${{ secrets.BOT_TOKEN }}
+          chat_id: ${{ secrets.CHAT_ID }}
+          type: complete
+          delete_message_id: ${{ needs.setup.outputs.notify_message_id }}
+
+      - name: Telegram Notification (Failure)
+        if: ${{ (needs.check-linux.result != 'success' || needs.build-android.result != 'success') && needs.setup.outputs.notify_message_id != '' }}
+        uses: ./.github/actions/telegram-notify
+        with:
+          bot_token: ${{ secrets.BOT_TOKEN }}
+          chat_id: ${{ secrets.CHAT_ID }}
+          type: failure
+          delete_message_id: ${{ needs.setup.outputs.notify_message_id }}

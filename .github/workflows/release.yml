@@ -1,0 +1,242 @@
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g. 0.2.0)'
+        required: true
+        type: string
+      dry_run:
+        description: 'Dry run (skip actual publish and git push)'
+        type: boolean
+        default: false
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+  CHAT_ID: ${{ secrets.CHAT_ID }}
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      notify_message_id: ${{ steps.notify_start.outputs.message_id }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Notify Release Start
+        if: ${{ env.BOT_TOKEN != '' }}
+        id: notify_start
+        uses: ./.github/actions/telegram-notify
+        with:
+          bot_token: ${{ secrets.BOT_TOKEN }}
+          chat_id: ${{ secrets.CHAT_ID }}
+          type: start
+
+  publish-crates:
+    name: publish · crates.io
+    needs: setup
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.vars.outputs.version }}
+      tag: ${{ steps.vars.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve Version and Tag
+        id: vars
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            RAW_VER="${{ github.event.inputs.version }}"
+            VER="${RAW_VER#v}"
+            TAG="v${VER}"
+          else
+            TAG="${{ github.ref_name }}"
+            VER="${TAG#v}"
+          fi
+          echo "version=$VER" >> $GITHUB_OUTPUT
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "Releasing version: $VER (tag: $TAG)"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      # When triggered via workflow_dispatch, the bot automatically bumps Cargo.toml, commits, and pushes the tag
+      - name: Bump Version & Push Tag (Bot)
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        run: |
+          VER="${{ steps.vars.outputs.version }}"
+          TAG="${{ steps.vars.outputs.tag }}"
+
+          echo "Updating version in kala/Cargo.toml to $VER..."
+          sed -i "s/^version = \".*\"/version = \"$VER\"/" kala/Cargo.toml
+
+          cargo check -p kala-ebpf >/dev/null 2>&1 || true
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add kala/Cargo.toml Cargo.lock
+          if ! git diff --cached --quiet; then
+            git commit -m "chore(release): bump version to $TAG"
+          else
+            echo "Version already matches $VER"
+          fi
+
+          if [ "${{ github.event.inputs.dry_run }}" != "true" ]; then
+            git tag -a "$TAG" -m "Release $TAG"
+            git push origin HEAD:main
+            git push origin "$TAG"
+          else
+            echo "Dry run: skipping git push"
+          fi
+
+      - name: Install eBPF build toolchain
+        run: |
+          rustup toolchain install nightly --profile minimal --component rust-src
+          rustup component add rust-src --toolchain nightly
+          mkdir -p "$HOME/.local/bin"
+          curl -fLO --retry 3 --retry-delay 2 https://github.com/aya-rs/bpf-linker/releases/latest/download/bpf-linker-x86_64-unknown-linux-musl.tar.zst
+          tar -xpf bpf-linker-x86_64-unknown-linux-musl.tar.zst -C "$HOME/.local/bin"
+          rm -f bpf-linker-x86_64-unknown-linux-musl.tar.zst
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Build embedded eBPF object
+        run: |
+          cd ebpf
+          RUSTC="$(rustup which rustc --toolchain nightly)" \
+            "$(rustup which cargo --toolchain nightly)" build \
+            -Zbuild-std=core --target-dir ../ebpf-target
+          mkdir -p ../kala/assets
+          cp ../ebpf-target/bpfel-unknown-none/debug/kala-ebpf-kernel ../kala/assets/kala-ebpf.bpf.o
+          echo "--- eBPF asset:"
+          sha256sum ../kala/assets/kala-ebpf.bpf.o
+
+      - name: Verify tests
+        run: cargo test -p kala-ebpf
+
+      - name: Publish to crates.io
+        run: |
+          TOKEN="${{ secrets.CRATES_IO_TOKEN || secrets.CARGO_REGISTRY_TOKEN || secrets.CRATES_TOKEN }}"
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ] || [ -z "$TOKEN" ]; then
+            echo "Dry run or no token provided, executing cargo publish --dry-run"
+            cargo publish -p kala-ebpf --dry-run --allow-dirty
+          else
+            cargo publish -p kala-ebpf --token "$TOKEN" --allow-dirty
+          fi
+
+      - name: Upload regenerated BPF asset
+        uses: actions/upload-artifact@v7
+        with:
+          name: ebpf-asset
+          path: kala/assets/kala-ebpf.bpf.o
+
+  build-android-and-release:
+    name: build · android & github release
+    runs-on: ubuntu-latest
+    needs: [setup, publish-crates]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - uses: nttld/setup-ndk@v1
+        id: ndk
+        with:
+          ndk-version: r29
+      - uses: actions/download-artifact@v8
+        with:
+          name: ebpf-asset
+          path: kala/assets
+
+      - name: Build Android Examples
+        run: cargo build -p kala-ebpf --examples --release --target aarch64-linux-android
+        env:
+          CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER: ${{ steps.ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android35-clang
+
+      - name: Package Android Prebuilt Binaries
+        id: package
+        run: |
+          TAG="${{ needs.publish-crates.outputs.tag }}"
+          [ -z "$TAG" ] && TAG="${{ github.ref_name }}"
+          [ -z "$TAG" ] && TAG="latest"
+
+          STRIP="${{ steps.ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
+          BIN_DIR="target/aarch64-linux-android/release/examples"
+          OUT_DIR="dist"
+          mkdir -p "$OUT_DIR/kala-android-binaries"
+
+          for bin in basic bench fps_monitor jank_detector multi_target; do
+            if [ -f "$BIN_DIR/$bin" ]; then
+              "$STRIP" --strip-all "$BIN_DIR/$bin" 2>/dev/null || strip --strip-all "$BIN_DIR/$bin" 2>/dev/null || true
+              cp "$BIN_DIR/$bin" "$OUT_DIR/kala-android-binaries/kala-$bin"
+            fi
+          done
+
+          cp kala/assets/kala-ebpf.bpf.o "$OUT_DIR/kala-android-binaries/" 2>/dev/null || true
+
+          TAR_NAME="kala-${TAG}-aarch64-android.tar.gz"
+          (
+            cd "$OUT_DIR"
+            tar -czf "../$TAR_NAME" kala-android-binaries
+          )
+
+          sha256sum "$TAR_NAME" > "${TAR_NAME}.sha256"
+          sha256sum kala/assets/kala-ebpf.bpf.o > "${OUT_DIR}/kala-ebpf.bpf.o.sha256"
+
+          echo "tar_name=$TAR_NAME" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: ${{ github.event.inputs.dry_run != true }}
+        with:
+          tag_name: ${{ needs.publish-crates.outputs.tag || github.ref_name }}
+          name: Release ${{ needs.publish-crates.outputs.tag || github.ref_name }}
+          generate_release_notes: true
+          files: |
+            ${{ steps.package.outputs.tar_name }}
+            ${{ steps.package.outputs.tar_name }}.sha256
+            kala/assets/kala-ebpf.bpf.o
+            dist/kala-ebpf.bpf.o.sha256
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  notify:
+    if: ${{ !cancelled() }}
+    needs: [setup, publish-crates, build-android-and-release]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Telegram Notification (Release)
+        if: ${{ needs.build-android-and-release.result == 'success' && needs.publish-crates.result == 'success' && env.BOT_TOKEN != '' }}
+        uses: ./.github/actions/telegram-notify
+        with:
+          bot_token: ${{ secrets.BOT_TOKEN }}
+          chat_id: ${{ secrets.CHAT_ID }}
+          type: complete
+          delete_message_id: ${{ needs.setup.outputs.notify_message_id }}
+          caption: |
+            <b>Kala v${{ needs.publish-crates.outputs.version }} Released!</b>
+
+            <a href="https://github.com/${{ github.repository }}/releases/tag/${{ needs.publish-crates.outputs.tag }}">GitHub Release</a> • <a href="https://crates.io/crates/kala-ebpf">Crates.io</a>
+
+      - name: Telegram Notification (Failure)
+        if: ${{ (needs.build-android-and-release.result != 'success' || needs.publish-crates.result != 'success') && needs.setup.outputs.notify_message_id != '' }}
+        uses: ./.github/actions/telegram-notify
+        with:
+          bot_token: ${{ secrets.BOT_TOKEN }}
+          chat_id: ${{ secrets.CHAT_ID }}
+          type: failure
+          delete_message_id: ${{ needs.setup.outputs.notify_message_id }}
