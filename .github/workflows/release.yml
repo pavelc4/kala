@@ -233,7 +233,7 @@ jobs:
             <a href="https://github.com/${{ github.repository }}/releases/tag/${{ needs.publish-crates.outputs.tag }}">GitHub Release</a> • <a href="https://crates.io/crates/kala-ebpf">Crates.io</a>
 
       - name: Telegram Notification (Failure)
-        if: ${{ (needs.build-android-and-release.result != 'success' || needs.publish-crates.result != 'success') && needs.setup.outputs.notify_message_id != '' }}
+        if: ${{ (needs.build-android-and-release.result != 'success' || needs.publish-crates.result != 'success') && env.BOT_TOKEN != '' }}
         uses: ./.github/actions/telegram-notify
         with:
           bot_token: ${{ secrets.BOT_TOKEN }}

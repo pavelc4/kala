@@ -54,7 +54,7 @@ runs:
         SAFE_COMMIT_MSG=$(echo "$COMMIT_MSG" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g')
 
         if [ "$NOTIFY_TYPE" = "start" ]; then
-          MESSAGE=$(printf "<b>Kala</b> #ci_%s\n\n<blockquote><code>%s</code></blockquote>\n\n<a href=\"%s\">Commit</a> • <a href=\"%s\">Workflow</a>" "$RUN_NUMBER" "$SAFE_COMMIT_MSG" "$COMMIT_URL" "$WORKFLOW_URL")
+          MESSAGE=$(printf "<b>Kala</b> #ci_%s\n\n<b>BUILDING</b>\n\n<blockquote><code>%s</code></blockquote>\n\n<a href=\"%s\">Commit</a> • <a href=\"%s\">Workflow</a>" "$RUN_NUMBER" "$SAFE_COMMIT_MSG" "$COMMIT_URL" "$WORKFLOW_URL")
           RESPONSE=$(curl -s -X POST "https://api.telegram.org/bot$BOT_TOKEN/sendMessage" \
             -d chat_id="$CHAT_ID" \
             --data-urlencode "text=$MESSAGE" \
@@ -70,7 +70,7 @@ runs:
           if [ -n "$CUSTOM_CAPTION" ]; then
             MESSAGE="$CUSTOM_CAPTION"
           else
-            MESSAGE=$(printf "<b>Kala</b> #ci_%s\n\n<blockquote><code>%s</code></blockquote>\n\n<a href=\"%s\">Commit</a> • <a href=\"%s\">Workflow</a>" "$RUN_NUMBER" "$SAFE_COMMIT_MSG" "$COMMIT_URL" "$WORKFLOW_URL")
+            MESSAGE=$(printf "<b>Kala</b> #ci_%s\n\n<b>PASSED</b>\n\n<blockquote><code>%s</code></blockquote>\n\n<a href=\"%s\">Commit</a> • <a href=\"%s\">Workflow</a>" "$RUN_NUMBER" "$SAFE_COMMIT_MSG" "$COMMIT_URL" "$WORKFLOW_URL")
           fi
           RESPONSE=$(curl -s -X POST "https://api.telegram.org/bot$BOT_TOKEN/sendMessage" \
             -d chat_id="$CHAT_ID" \
@@ -80,7 +80,7 @@ runs:
           echo "Telegram Response: $RESPONSE"
 
         elif [ "$NOTIFY_TYPE" = "failure" ]; then
-          MESSAGE=$(printf "<b>Kala</b> #ci_%s\n\n❌ <b>FAILED</b>\n\n<blockquote><code>%s</code></blockquote>\n\n<a href=\"%s\">Commit</a> • <a href=\"%s\">Workflow</a>" "$RUN_NUMBER" "$SAFE_COMMIT_MSG" "$COMMIT_URL" "$WORKFLOW_URL")
+          MESSAGE=$(printf "<b>Kala</b> #ci_%s\n\n<b>FAILED</b>\n\n<blockquote><code>%s</code></blockquote>\n\n<a href=\"%s\">Commit</a> • <a href=\"%s\">Workflow</a>" "$RUN_NUMBER" "$SAFE_COMMIT_MSG" "$COMMIT_URL" "$WORKFLOW_URL")
           RESPONSE=$(curl -s -X POST "https://api.telegram.org/bot$BOT_TOKEN/sendMessage" \
             -d chat_id="$CHAT_ID" \
             --data-urlencode "text=$MESSAGE" \

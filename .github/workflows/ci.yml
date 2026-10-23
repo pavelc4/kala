@@ -121,7 +121,7 @@ jobs:
           delete_message_id: ${{ needs.setup.outputs.notify_message_id }}
 
       - name: Telegram Notification (Failure)
-        if: ${{ (needs.check-linux.result != 'success' || needs.build-android.result != 'success') && needs.setup.outputs.notify_message_id != '' }}
+        if: ${{ (needs.check-linux.result != 'success' || needs.build-android.result != 'success') && env.BOT_TOKEN != '' }}
         uses: ./.github/actions/telegram-notify
         with:
           bot_token: ${{ secrets.BOT_TOKEN }}
