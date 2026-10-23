@@ -1,6 +1,6 @@
 [package]
 name = "kala-ebpf"
-version = "0.1.0"
+version = "0.2.0"
 description = "Per-app frame-time probe for Android via eBPF uprobe on libgui Surface::queueBuffer"
 keywords = ["ebpf", "android", "frame-time", "uprobe", "aya"]
 categories = ["os::linux-apis", "external-ffi-bindings"]
