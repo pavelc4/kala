@@ -267,7 +267,7 @@ fn quad_buffering_pipeline_yields_stable_deltas() {
 
     let mut total_yielded = 0;
     for i in 4u64..=48 {
-        let buf = buffers[(i as usize) % 4];
+        let buf = buffers[usize::try_from(i % 4).unwrap()];
         if let Some(ft) = t.record(FrameRecord {
             ktime_ns: i * frame_ns,
             buffer: buf,
@@ -407,7 +407,7 @@ fn timestamp_retrograde_and_zero_delta_gracefully_handled() {
             ktime_ns: 35_000,
             buffer: buf
         }),
-        Some(Duration::from_nanos(20_000))
+        Some(Duration::from_micros(20))
     );
 }
 
@@ -461,7 +461,7 @@ fn heavy_churn_memory_bound() {
     let buffers = [0x301, 0x302, 0x303];
 
     for i in 1u64..=10_000 {
-        let buf = buffers[(i as usize) % 3];
+        let buf = buffers[usize::try_from(i % 3).unwrap()];
         t.record(FrameRecord {
             ktime_ns: i * frame_ns,
             buffer: buf,

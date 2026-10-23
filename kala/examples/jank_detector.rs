@@ -10,6 +10,8 @@
 //! adb shell su -c "/data/local/tmp/jank_detector <pid> [target_fps]"
 //! ```
 
+#![allow(clippy::pedantic)]
+
 use std::{
     env, process,
     time::{Duration, Instant},

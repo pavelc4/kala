@@ -13,6 +13,8 @@
 //! adb shell su -c "/data/local/tmp/bench <pid> [seconds]"
 //! ```
 
+#![allow(clippy::pedantic)]
+
 use std::{
     alloc::{GlobalAlloc, Layout, System},
     env, process,

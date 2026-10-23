@@ -10,6 +10,8 @@
 //! adb shell su -c "/data/local/tmp/fps_monitor <pid> [duration_seconds]"
 //! ```
 
+#![allow(clippy::pedantic)]
+
 use std::{
     env, process,
     time::{Duration, Instant},

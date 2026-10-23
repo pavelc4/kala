@@ -10,6 +10,8 @@
 //! adb shell su -c "/data/local/tmp/multi_target <pid1> <pid2> [...]"
 //! ```
 
+#![allow(clippy::pedantic)]
+
 use std::{
     collections::HashMap,
     env, process,
